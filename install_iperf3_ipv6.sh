@@ -106,7 +106,7 @@ fi
 
 # 获取本机的外网 IPv6 地址
 echo "获取外网 IPv6 地址..."
-EXTERNAL_IP=$(curl -s https://icanhazip.com)
+EXTERNAL_IP=$(curl -s https://6.ipw.cn)
 
 # 检查是否成功获取到外网 IP
 if [[ $? -ne 0 || -z "$EXTERNAL_IP" ]]; then
