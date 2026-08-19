@@ -5,6 +5,7 @@
 
 # 默认端口
 DEFAULT_PORT=5022
+IP_LOOKUP_URL="https://icanhazip.com"
 
 # 函数：显示使用说明
 show_help() {
@@ -106,11 +107,14 @@ fi
 
 # 获取本机的外网 IPv6 地址
 echo "获取外网 IPv6 地址..."
-EXTERNAL_IP=$(curl -s https://6.ipw.cn)
+if ! EXTERNAL_IP=$(curl -6 -fsS --connect-timeout 5 --max-time 10 "$IP_LOOKUP_URL"); then
+    echo "未能从 $IP_LOOKUP_URL 获取外网 IPv6 地址。请检查 IPv6 网络连接或服务状态。"
+    exit 1
+fi
 
-# 检查是否成功获取到外网 IP
-if [[ $? -ne 0 || -z "$EXTERNAL_IP" ]]; then
-    echo "未能获取到外网 IPv6 地址。请检查网络连接或服务状态。"
+# 防止服务异常时将 HTML 等内容误当成 IPv6 地址
+if ! [[ "$EXTERNAL_IP" =~ ^[0-9A-Fa-f:]+$ && "$EXTERNAL_IP" == *:* ]]; then
+    echo "IP 查询服务返回了无效的 IPv6 地址: $EXTERNAL_IP"
     exit 1
 fi
 
