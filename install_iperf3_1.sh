@@ -5,6 +5,7 @@
 
 # 默认端口
 DEFAULT_PORT=5022
+PACKAGE_PORT=5201
 IP_LOOKUP_URL="https://icanhazip.com"
 
 # 函数：显示使用说明
@@ -28,18 +29,50 @@ validate_port() {
         echo "错误: 端口号必须是数字。"
         exit 1
     fi
-    if (( port < 1 || port > 65535 )); then
+    if ! [[ "$port" =~ ^0*([1-9][0-9]{0,4})$ ]] || (( BASH_REMATCH[1] > 65535 )); then
         echo "错误: 端口号必须在1到65535之间。"
         exit 1
     fi
+    PORT=${BASH_REMATCH[1]}
 }
 
 # 函数：检查端口是否被占用
 check_port() {
     local port=$1
-    if sudo lsof -i TCP:"$port" -s TCP:LISTEN -t >/dev/null ; then
+    if sudo lsof -nP -a -iTCP:"$port" -sTCP:LISTEN -t >/dev/null; then
         echo "错误: 端口 $port 已被占用。请选择其他端口。"
         exit 1
+    fi
+}
+
+# 告诉 Debian/Ubuntu 软件包不要自动启动后台服务器。
+disable_package_autostart() {
+    printf '%s\n' 'iperf3 iperf3/start_daemon boolean false' | sudo debconf-set-selections
+}
+
+# 只停止已经监听软件包默认端口的系统服务。
+stop_package_listener() {
+    local listeners service_pid unit
+    listeners=$(sudo lsof -nP -a -c iperf3 -iTCP:"$PACKAGE_PORT" -sTCP:LISTEN -t) || return 0
+
+    if command_exists systemctl; then
+        for unit in iperf3.service iperf3-server.service; do
+            service_pid=$(systemctl show --property=MainPID --value "$unit" 2>/dev/null) || continue
+            if grep -Fxq "$service_pid" <<< "$listeners"; then
+                echo "停止并禁用监听 $PACKAGE_PORT 端口的系统服务 $unit。"
+                if [[ "$unit" == iperf3.service ]]; then
+                    disable_package_autostart || return 1
+                fi
+                sudo systemctl disable --now "$unit"
+                return $?
+            fi
+        done
+    fi
+
+    if [[ -x /etc/init.d/iperf3 && -r /run/iperf3.pid ]] &&
+        read -r service_pid < /run/iperf3.pid && grep -Fxq "$service_pid" <<< "$listeners"; then
+        echo "停止并禁用监听 $PACKAGE_PORT 端口的 iperf3 系统服务。"
+        disable_package_autostart && sudo service iperf3 stop && sudo update-rc.d iperf3 disable
     fi
 }
 
@@ -72,8 +105,14 @@ shift $((OPTIND -1))
 # 验证端口号
 validate_port "$PORT"
 
-# 检查端口是否被占用
-check_port "$PORT"
+if ! command_exists lsof; then
+    echo "错误: 请先安装 lsof（sudo apt install -y lsof）。" >&2
+    exit 1
+fi
+
+if [[ "$PORT" != "$PACKAGE_PORT" ]]; then
+    check_port "$PORT"
+fi
 
 echo "使用端口号: $PORT"
 
@@ -86,8 +125,9 @@ if command_exists iperf3; then
     echo "iperf3 已经安装，跳过安装步骤。"
 else
     echo "安装 iperf3..."
-    sudo apt install -y iperf3
-    if ! command_exists iperf3; then
+    if ! disable_package_autostart ||
+        ! sudo env DEBIAN_FRONTEND=noninteractive apt install -y iperf3 ||
+        ! command_exists iperf3; then
         echo "iperf3 安装失败。请检查网络连接或包管理器状态。"
         exit 1
     fi
@@ -120,18 +160,20 @@ fi
 
 echo "外网 IP 地址为: $EXTERNAL_IP"
 
+if ! stop_package_listener; then
+    echo "无法停用监听 $PACKAGE_PORT 端口的 iperf3 系统服务。" >&2
+    exit 1
+fi
+
+if [[ "$PORT" == "$PACKAGE_PORT" ]]; then
+    check_port "$PORT"
+fi
+
 # 输出带有外网 IP 和自定义端口的客户端命令
 echo "客户端命令如下："
 echo "iperf3 -c $EXTERNAL_IP -p $PORT -t 30 -P 1 -R"
 
 # 启动 iperf3 服务器
-echo "启动 iperf3 服务器..."
-# 使用 & 将服务器放到后台运行，避免阻塞脚本
-iperf3 -s -p "$PORT" &
-# 获取服务器进程的 PID
-IPERF3_PID=$!
-echo "iperf3 服务器已启动，进程 PID: $IPERF3_PID"
-
-# 可选：保持脚本运行，直到用户手动停止
+echo "正在启动 iperf3 服务器，端口: $PORT，进程 PID: $$"
 echo "按 [CTRL+C] 停止 iperf3 服务器。"
-wait "$IPERF3_PID"
+exec iperf3 -s -p "$PORT"

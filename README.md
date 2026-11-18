@@ -62,11 +62,13 @@ bash install_iperf3.sh
 bash install_iperf3_1.sh
 ```
 
-指定其他端口，例如 `5201`：
+指定其他端口，例如 `6000`：
 
 ```bash
-bash install_iperf3_1.sh -p 5201
+bash install_iperf3_1.sh -p 6000
 ```
+
+如果 Debian/Ubuntu 软件包的 iperf3 后台服务已经监听默认端口 `5201`，脚本会停止该服务并禁用其开机自启，然后在指定端口以前台方式运行。按 `Ctrl+C` 即可关闭本次启动的监听。
 
 ### IPv6 自定义端口
 
